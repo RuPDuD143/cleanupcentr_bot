@@ -17,7 +17,8 @@ const CHAIN = {
   id: "1064487b3cd1a897ce03ae5b6a865651747e2e152090f99c1d19d44e01aea5a4",
   url: "https://wax.greymass.com"
 };
-const API_BASE     = "https://maestrobeatz.servegame.com"; // called server-side, no CORS/proxy needed here
+const PROXY        = "https://cleanupcentr.rrlworlds1434.workers.dev/?url=";
+const API_BASE     = "https://maestrobeatz.servegame.com";
 const FARM_ID      = "1099958357919";
 
 const CONTRACT     = "rhythmfarmer";
@@ -56,9 +57,16 @@ const session = new Session({
 const actor = () => WAX_ACCOUNT;
 const perm  = () => ({ actor: actor(), permission: "bot" });
 
-// ─── API helper (no CORS restrictions server-side, call API_BASE directly) ─
+// ─── API helper — routed through the same proxy worker as farm.html,
+// in case the game server only accepts traffic coming from that worker ────
 async function apiFetch(path) {
-  const res = await fetch(API_BASE + path);
+  const url = PROXY + API_BASE + path;
+  const res = await fetch(url, {
+    headers: {
+      "X-Requested-With": "XMLHttpRequest",
+      "Origin": "https://rupdud143.github.io"
+    }
+  });
   const text = await res.text();
   const match = text.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
   if (!match) throw new Error("No JSON found in response for: " + path);
@@ -161,25 +169,59 @@ function buildFeeAction(points, price) {
 // ─── Plant helper (in-game seeds/compost only — bag NFTs need image lookups
 // that were browser-only; if you rely on bag seeds/compost regularly, tell
 // me and I'll port the /bag/{actor} handling in too) ───────────────────────
-let seedIdx = 0, _compostUsed = 0;
-function resetPlantCounters() { seedIdx = 0; _compostUsed = 0; }
+let seedArray = [];
+let bagSeedArray = [];
+let bagCompostArray = [];
+let compostBalance = 0;
+let seedIdx = 0, _bagSeedIdx = 0, _bagCompostIdx = 0, _compostUsed = 0;
+function resetPlantCounters() { seedIdx = 0; _bagSeedIdx = 0; _bagCompostIdx = 0; _compostUsed = 0; }
 
-function resolveCompost(compostBalance) {
-  if (compostBalance - _compostUsed > 0) { _compostUsed++; return true; }
+// Returns true if compost is available for this plant action — uses in-game
+// compost first, then falls back to staking a compost NFT from the bag.
+function resolveCompost(pendingActions, plotLabel) {
+  const available = compostBalance - _compostUsed;
+  if (available > 0) { _compostUsed++; return true; }
+  if (_bagCompostIdx < bagCompostArray.length) {
+    const nft = bagCompostArray[_bagCompostIdx++];
+    pendingActions.push({
+      account: ATOMIC_CTR, name: "transfer",
+      data: { from: actor(), to: CONTRACT, asset_ids: [nft.asset_id], memo: "deposit:compost" },
+      _label: `🌿 Stake compost NFT (${nft.asset_id}) for ${plotLabel}`
+    });
+    return true;
+  }
   return false;
 }
 
-function queuePlantActions(item, pendingActions, seedArray, compostBalance) {
+function queuePlantActions(item, pendingActions) {
+  const plotLabel = `${item.plot_name} slot ${item.index}`;
+
+  // Try in-game seeds first
   if (seedIdx < seedArray.length) {
     const seed = seedArray[seedIdx];
-    if (!resolveCompost(compostBalance)) return;
+    if (!resolveCompost(pendingActions, plotLabel)) return; // no compost anywhere — skip
     seedIdx++;
     pendingActions.push({
       account: CONTRACT, name: "plant",
       data: { owner: actor(), plot_asset_id: item.plot_asset_id, slot_index: item.index, seed_tpl_id: seed.seed_tpl_id, seed_batch_id: Number(seed.seed_asset_id) },
-      _label: `🌱 Plant (tpl ${seed.seed_tpl_id}) — ${item.plot_name} slot ${item.index}`
+      _label: `🌱 Plant (tpl ${seed.seed_tpl_id}) — ${plotLabel}`
     });
+    return;
   }
+
+  // No in-game seeds — try bag NFT seeds
+  if (_bagSeedIdx < bagSeedArray.length) {
+    const nftSeed = bagSeedArray[_bagSeedIdx];
+    if (!resolveCompost(pendingActions, plotLabel)) return;
+    _bagSeedIdx++;
+    pendingActions.push({
+      account: ATOMIC_CTR, name: "transfer",
+      data: { from: actor(), to: CONTRACT, asset_ids: [nftSeed.seed_asset_id], memo: "open:seedpack" },
+      _label: `📦 Stake seed NFT (${nftSeed.seed_asset_id}) for ${plotLabel}`
+    });
+    return;
+  }
+  // No seeds anywhere — nothing to queue
 }
 
 function buildMaximizeTransfer(fromEnergy, maxEnergy, cinderBudget, isFinal) {
@@ -253,8 +295,24 @@ async function main() {
     farmSlots.push({ ...slot, plot_asset_id: plot.plot_asset_id, plot_name: plot.name })));
 
   const playerStatus   = await apiFetch(`/api/player/${actor()}/status`);
-  const seedArray       = buildSeedArray(playerStatus);
-  const compostBalance  = Number(playerStatus?.compost?.balance ?? 0);
+  seedArray      = buildSeedArray(playerStatus);
+  compostBalance = Number(playerStatus?.compost?.balance ?? 0);
+
+  // Bag NFT seeds/compost — always checked, even when in-game items exist,
+  // matching farm.html's behavior.
+  let bagData = null;
+  try { bagData = await apiFetch(`/bag/${actor()}`); } catch { /* no bag data available */ }
+  const bagAssets = bagData?.assets || [];
+  bagSeedArray = bagAssets
+    .filter(a => a.schema === "seeds" || (a.nft_type || "").toLowerCase().includes("seed"))
+    .map(a => ({ seed_asset_id: a.asset_id, seed_tpl_id: a.template_id || 0 }))
+    .sort((a, b) => b.seed_tpl_id - a.seed_tpl_id);
+  bagCompostArray = bagAssets
+    .filter(a => a.schema === "compost" || (a.nft_type || "").toLowerCase().includes("compost"))
+    .map(a => ({ asset_id: a.asset_id }));
+
+  console.log(`DEBUG: in-game seeds = ${seedArray.length}, bag seeds = ${bagSeedArray.length}, in-game compost = ${compostBalance}, bag compost = ${bagCompostArray.length}`);
+
   const energyData      = await apiFetch(`/userenergy/${actor()}`);
   const machineData     = await apiFetch(`/machines/${actor()}`);
   const balances        = await fetchBalances();
@@ -272,16 +330,16 @@ async function main() {
     if (item.state === "READY") {
       pendingActions.push({ account: CONTRACT, name: "harvest", data: { owner: actor(), plot_asset_id: item.plot_asset_id, slot_index: item.index }, _label: `🌾 Harvest — ${item.plot_name} slot ${item.index}` });
       hasHarvestAction = true;
-      queuePlantActions(item, pendingActions, seedArray, compostBalance);
+      queuePlantActions(item, pendingActions);
     } else if (item.state === "EMPTY") {
-      queuePlantActions(item, pendingActions, seedArray, compostBalance);
+      queuePlantActions(item, pendingActions);
     } else if (diff < HOURS_8) {
       // still growing — nothing to do
     } else if (item.tick_goal > 0 && item.tick + 1 === item.tick_goal && item.state !== "READY" && item.state !== "EMPTY") {
       pendingActions.push({ account: CONTRACT, name: "water", data: { owner: actor(), plot_asset_id: item.plot_asset_id, slot_index: item.index }, _label: `💧 Water (last) — ${item.plot_name} slot ${item.index}` });
       pendingActions.push({ account: CONTRACT, name: "harvest", data: { owner: actor(), plot_asset_id: item.plot_asset_id, slot_index: item.index }, _label: `🌾 Harvest (after last water) — ${item.plot_name} slot ${item.index}` });
       hasHarvestAction = true;
-      queuePlantActions(item, pendingActions, seedArray, compostBalance);
+      queuePlantActions(item, pendingActions);
     } else {
       pendingActions.push({ account: CONTRACT, name: "water", data: { owner: actor(), plot_asset_id: item.plot_asset_id, slot_index: item.index }, _label: `💧 Water — ${item.plot_name} slot ${item.index}` });
     }
