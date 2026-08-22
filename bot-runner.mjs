@@ -43,7 +43,7 @@ const UINT64_FIELDS = new Set(["plot_asset_id", "slot_index", "machine_id", "see
 const PACK_BLEND_ID       = 1;
 const TOMATOE_PACK_MAIN   = 1800000;
 const TOMATOE_PACK_FEE    = 420000;
-const TOMATOE_PACK_COST   = TOMATOE_PACK_MAIN + TOMATOE_PACK_FEE;
+const TOMATOE_PACK_COST   = TOMATOE_PACK_MAIN + TOMATOE_PACK_FEE+ 1000000;
 
 const COMPOST_TPL_ID      = 904726;
 const COMPOST_BLEND_ID    = 4;
