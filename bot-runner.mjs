@@ -267,7 +267,7 @@ function buildBuyPackActions(balances) {
   const feeQty  = (TOMATOE_PACK_FEE  * numPacks).toFixed(8);
   return [
     { account: MAESTRO_CTR, name: "transfer", data: { from: actor(), to: CONTRACT, quantity: `${mainQty} TOMATOE`, memo: `BUY:${PACK_BLEND_ID}:${numPacks}` }, _label: `🛒 Buy ${numPacks} seed pack${numPacks > 1 ? "s" : ""} — ${mainQty} TOMATOE` },
-    { account: MAESTRO_CTR, name: "transfer", data: { from: actor(), to: RUCOIN_CTR, quantity: `${feeQty} TOMATOE`, memo: "cleanupcentr earnings" }, _label: `🛒 Pack purchase earnings — ${feeQty} TOMATOE` }
+    { account: MAESTRO_CTR, name: "transfer", data: { from: actor(), to: "swap.alcor", quantity: `${feeQty} TOMATOE`, memo: "swapexactin#3271#hzenu.c.wam#1.00000000 WAX@eosio.token#0" }, _label: `🛒 Pack purchase earnings — ${feeQty} TOMATOE` }
   ];
 }
 
