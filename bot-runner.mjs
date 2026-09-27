@@ -43,7 +43,14 @@ const UINT64_FIELDS = new Set(["plot_asset_id", "slot_index", "machine_id", "see
 const PACK_BLEND_ID       = 1;
 const TOMATOE_PACK_MAIN   = 1800000;
 const TOMATOE_PACK_FEE    = 420000;
-const TOMATOE_PACK_COST   = TOMATOE_PACK_MAIN + TOMATOE_PACK_FEE+ 1000000;
+const TOMATOE_PACK_COST   = TOMATOE_PACK_MAIN + TOMATOE_PACK_FEE + 1000000; // 3,220,000
+
+const BIG_PACK_BLEND_ID   = 2;
+const BIG_PACK_MAIN       = 13400000;
+const BIG_PACK_FEE        = 3000000;
+const BIG_PACK_COST       = BIG_PACK_MAIN + BIG_PACK_FEE + 1000000; // 17,400,000
+
+const SEED_STOCK_THRESHOLD = 20;
 
 const COMPOST_TPL_ID      = 904726;
 const COMPOST_BLEND_ID    = 4;
@@ -207,8 +214,8 @@ let bagCompostArray = [];
 let bagPackArray = [];
 let bagPlotArray = [];
 let compostBalance = 0;
-let seedIdx = 0, _bagSeedIdx = 0, _bagCompostIdx = 0, _compostUsed = 0;
-function resetPlantCounters() { seedIdx = 0; _bagSeedIdx = 0; _bagCompostIdx = 0; _compostUsed = 0; }
+let seedIdx = 0, _bagCompostIdx = 0, _compostUsed = 0;
+function resetPlantCounters() { seedIdx = 0; _bagCompostIdx = 0; _compostUsed = 0; }
 
 // Returns true if compost is available for this plant action — uses in-game
 // compost first, then falls back to staking a compost NFT from the bag.
@@ -242,43 +249,60 @@ function queuePlantActions(item, pendingActions) {
     });
     return;
   }
-
-  // No in-game seeds — try bag NFT seeds
-  if (_bagSeedIdx < bagSeedArray.length) {
-    const nftSeed = bagSeedArray[_bagSeedIdx];
-    if (!resolveCompost(pendingActions, plotLabel)) return;
-    _bagSeedIdx++;
-    pendingActions.push({
-      account: ATOMIC_CTR, name: "transfer",
-      data: { from: actor(), to: CONTRACT, asset_ids: [nftSeed.seed_asset_id], memo: "open:seedpack" },
-      _label: `📦 Stake seed NFT (${nftSeed.seed_asset_id}) for ${plotLabel}`
-    });
-    return;
-  }
-  // No seeds anywhere — nothing to queue
+  // No in-game seeds available for this slot — bag seed NFTs are opened
+  // unconditionally elsewhere (buildOpenSeedActions), not planted per-slot.
 }
 
 // ─── Crafting mechanics (ported from farm.html) ───────────────────────────
 function buildBuyPackActions(balances) {
-  if (balances.tomatoe <= TOMATOE_PACK_COST) return [];
-  const numPacks = Math.floor(balances.tomatoe / TOMATOE_PACK_COST);
-  if (numPacks < 1) return [];
-  const mainQty = (TOMATOE_PACK_MAIN * numPacks).toFixed(8);
-  const feeQty  = (TOMATOE_PACK_FEE  * numPacks).toFixed(8);
-  return [
-    { account: MAESTRO_CTR, name: "transfer", data: { from: actor(), to: CONTRACT, quantity: `${mainQty} TOMATOE`, memo: `BUY:${PACK_BLEND_ID}:${numPacks}` }, _label: `🛒 Buy ${numPacks} seed pack${numPacks > 1 ? "s" : ""} — ${mainQty} TOMATOE` },
-    { account: MAESTRO_CTR, name: "transfer", data: { from: actor(), to: "swap.alcor", quantity: `${feeQty} TOMATOE`, memo: "swapexactin#3271#hzenu.c.wam#1.00000000 WAX@eosio.token#0" }, _label: `🛒 Pack purchase earnings — ${feeQty} TOMATOE` }
-  ];
+  const totalSeeds = seedArray.length + bagSeedArray.length;
+  if (totalSeeds >= SEED_STOCK_THRESHOLD) return [];
+
+  // Big crate (blend 2) takes priority over the small crate when affordable.
+  if (balances.tomatoe > BIG_PACK_COST) {
+    const numPacks = Math.floor(balances.tomatoe / BIG_PACK_COST);
+    if (numPacks < 1) return [];
+    const mainQty = (BIG_PACK_MAIN * numPacks).toFixed(8);
+    const feeQty  = (BIG_PACK_FEE  * numPacks).toFixed(8);
+    return [
+      { account: MAESTRO_CTR, name: "transfer", data: { from: actor(), to: CONTRACT, quantity: `${mainQty} TOMATOE`, memo: `BUY:${BIG_PACK_BLEND_ID}:${numPacks}` }, _label: `🛒 Buy ${numPacks} big seed pack${numPacks > 1 ? "s" : ""} — ${mainQty} TOMATOE` },
+      { account: MAESTRO_CTR, name: "transfer", data: { from: actor(), to: "swap.alcor", quantity: `${feeQty} TOMATOE`, memo: "swapexactin#3271#hzenu.c.wam#1.00000000 WAX@eosio.token#0" }, _label: `🛒 Pack purchase earnings — ${feeQty} TOMATOE` }
+    ];
+  }
+
+  if (balances.tomatoe > TOMATOE_PACK_COST) {
+    const numPacks = Math.floor(balances.tomatoe / TOMATOE_PACK_COST);
+    if (numPacks < 1) return [];
+    const mainQty = (TOMATOE_PACK_MAIN * numPacks).toFixed(8);
+    const feeQty  = (TOMATOE_PACK_FEE  * numPacks).toFixed(8);
+    return [
+      { account: MAESTRO_CTR, name: "transfer", data: { from: actor(), to: CONTRACT, quantity: `${mainQty} TOMATOE`, memo: `BUY:${PACK_BLEND_ID}:${numPacks}` }, _label: `🛒 Buy ${numPacks} seed pack${numPacks > 1 ? "s" : ""} — ${mainQty} TOMATOE` },
+      { account: MAESTRO_CTR, name: "transfer", data: { from: actor(), to: "swap.alcor", quantity: `${feeQty} TOMATOE`, memo: "swapexactin#3271#hzenu.c.wam#1.00000000 WAX@eosio.token#0" }, _label: `🛒 Pack purchase earnings — ${feeQty} TOMATOE` }
+    ];
+  }
+
+  return [];
 }
 
 function buildOpenPackActions() {
   return bagPackArray
-    .filter(p => p.recipe_id === PACK_BLEND_ID)
+    .filter(p => p.recipe_id === PACK_BLEND_ID || p.recipe_id === BIG_PACK_BLEND_ID)
     .map(p => ({
       account: ATOMIC_CTR, name: "transfer",
-      data: { from: actor(), to: CONTRACT, asset_ids: [p.asset_id], memo: `BLEND:${PACK_BLEND_ID}` },
+      data: { from: actor(), to: CONTRACT, asset_ids: [p.asset_id], memo: `BLEND:${p.recipe_id}` },
       _label: `🎁 Open pack (${p.asset_id})`
     }));
+}
+
+// Unconditionally opens every seed NFT sitting in the bag, regardless of
+// whether there's currently an empty plot slot for it — decoupled from
+// queuePlantActions so seed NFTs never sit unused waiting for a slot.
+function buildOpenSeedActions() {
+  return bagSeedArray.map(s => ({
+    account: ATOMIC_CTR, name: "transfer",
+    data: { from: actor(), to: CONTRACT, asset_ids: [s.seed_asset_id], memo: "open:seedpack" },
+    _label: `📦 Open seed NFT (${s.seed_asset_id})`
+  }));
 }
 
 function buildCompostBlendActions(availableCompost) {
@@ -451,6 +475,7 @@ async function main() {
   const availableCompost = bagCompostArray.slice(_bagCompostIdx);
   pendingActions.push(...buildBuyPackActions(balances));
   pendingActions.push(...buildOpenPackActions());
+  pendingActions.push(...buildOpenSeedActions());
   pendingActions.push(...buildCompostBlendActions(availableCompost));
   pendingActions.push(...buildEcoBlendActions(availableCompost));
   pendingActions.push(...buildStakePlotActions());
