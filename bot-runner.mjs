@@ -431,7 +431,14 @@ async function main() {
     .sort((a, b) => b.seed_tpl_id - a.seed_tpl_id);
   bagCompostArray = bagAssets
     .filter(a => a.schema === "compost" || (a.nft_type || "").toLowerCase().includes("compost"))
-    .map(a => ({ asset_id: a.asset_id, template_id: a.template_id || 0 }));
+    .map(a => ({ asset_id: a.asset_id, template_id: a.template_id || 0 }))
+    // Regular Compost Bag (COMPOST_TPL_ID) is used before EcoFusion Compost
+    // (ECO_COMPOST_TPL_ID) — the latter is reserved for eco blending, not
+    // spent on ordinary planting unless it's all that's left.
+    .sort((a, b) => {
+      const rank = t => t === COMPOST_TPL_ID ? 0 : t === ECO_COMPOST_TPL_ID ? 1 : 2;
+      return rank(a.template_id) - rank(b.template_id);
+    });
   bagPackArray = bagAssets
     .filter(a => a.schema === "packs" || (a.nft_type || "").toLowerCase().includes("crate"))
     .map(a => ({ asset_id: a.asset_id, template_id: a.template_id || 0, recipe_id: a.recipe_id ?? null }));
