@@ -285,8 +285,12 @@ function buildBuyPackActions(balances) {
 }
 
 function buildOpenPackActions() {
+  // Open every crate in the bag's "packs" schema, regardless of recipe_id —
+  // there are more crate types than just the two blends we buy (e.g. the
+  // EcoCrate, recipe_id 3), and all of them need to be opened. Skip any
+  // pack missing a recipe_id so we never send a broken "BLEND:null" memo.
   return bagPackArray
-    .filter(p => p.recipe_id === PACK_BLEND_ID || p.recipe_id === BIG_PACK_BLEND_ID)
+    .filter(p => p.recipe_id !== null && p.recipe_id !== undefined)
     .map(p => ({
       account: ATOMIC_CTR, name: "transfer",
       data: { from: actor(), to: CONTRACT, asset_ids: [p.asset_id], memo: `BLEND:${p.recipe_id}` },
