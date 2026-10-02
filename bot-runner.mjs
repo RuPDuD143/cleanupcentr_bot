@@ -35,6 +35,7 @@ const RUCOIN_TOKEN_ID   = "rucoin-rupdud143143";
 const FEE_PER_POINT_USD = 0.001;
 const TASK_FEE_ACTIONS  = new Set(["water", "harvest", "plant", "startmach", "claimmach", "claimseedrwd"]);
 const MACHINE_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+const MACHINES_ENABLED = false; // TEMP: machine claim/reload disabled — flip back to true to re-enable
 const ENERGY_COST = { water: 2, harvest: 2, plant: 2, claimmach: 100 };
 const CINDER_PER_ENERGY = 2;
 const UINT64_FIELDS = new Set(["plot_asset_id", "slot_index", "machine_id", "seed_batch_id", "recipe_id", "batch_size", "seed_tpl_id"]);
@@ -491,15 +492,17 @@ async function main() {
   pendingActions.push(...buildEcoBlendActions(availableCompost));
   pendingActions.push(...buildStakePlotActions());
 
-  (machineData?.machines || []).forEach(machine => {
-    if (!isMachineClaimable(machine)) return;
-    const machineId = machine.machine_id;
-    const recipeId  = machine.current_recipe_id || 1;
-    pendingActions.push({ account: CONTRACT, name: "claimmach", data: { user: actor(), machine_id: Number(machineId) }, _label: `📦 Claim machine ${machineId}` });
-    pendingActions.push({ account: MAESTRO_CTR, name: "transfer", data: { from: actor(), to: CONTRACT, quantity: "10000.00000000 TOMATOE", memo: `recipe:machine:${machineId}:${recipeId}` }, _label: "🍅 Deposit 10k TOMATOE" });
-    pendingActions.push({ account: MAESTRO_CTR, name: "transfer", data: { from: actor(), to: CONTRACT, quantity: "10000.00000000 BANANAZ", memo: `recipe:machine:${machineId}:${recipeId}` }, _label: "🍌 Deposit 10k BANANAZ" });
-    pendingActions.push({ account: CONTRACT, name: "startmach", data: { user: actor(), machine_id: Number(machineId), recipe_id: Number(recipeId), batch_size: 1 }, _label: `▶️ Start machine ${machineId}` });
-  });
+  if (MACHINES_ENABLED) {
+    (machineData?.machines || []).forEach(machine => {
+      if (!isMachineClaimable(machine)) return;
+      const machineId = machine.machine_id;
+      const recipeId  = machine.current_recipe_id || 1;
+      pendingActions.push({ account: CONTRACT, name: "claimmach", data: { user: actor(), machine_id: Number(machineId) }, _label: `📦 Claim machine ${machineId}` });
+      pendingActions.push({ account: MAESTRO_CTR, name: "transfer", data: { from: actor(), to: CONTRACT, quantity: "10000.00000000 TOMATOE", memo: `recipe:machine:${machineId}:${recipeId}` }, _label: "🍅 Deposit 10k TOMATOE" });
+      pendingActions.push({ account: MAESTRO_CTR, name: "transfer", data: { from: actor(), to: CONTRACT, quantity: "10000.00000000 BANANAZ", memo: `recipe:machine:${machineId}:${recipeId}` }, _label: "🍌 Deposit 10k BANANAZ" });
+      pendingActions.push({ account: CONTRACT, name: "startmach", data: { user: actor(), machine_id: Number(machineId), recipe_id: Number(recipeId), batch_size: 1 }, _label: `▶️ Start machine ${machineId}` });
+    });
+  }
 
   if (hasHarvestAction) {
     pendingActions.push({ account: CONTRACT, name: "claimseedrwd", data: { owner: actor() }, _label: "🌱 Claim Seed Reward" });
