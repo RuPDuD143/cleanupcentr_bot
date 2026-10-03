@@ -141,7 +141,13 @@ function buildSeedArray(playerStatus) {
       expanded.push({ seed_asset_id: b.seed_asset_id, seed_tpl_id: b.seed_tpl_id, level: b.seed_tpl_id, fromBag: false });
     }
   });
-  expanded.sort((a, b) => b.level - a.level);
+  // Seed tpl priority: 3 > 1 > 2 (not numeric order). Unknown tpl ids sort last.
+  const SEED_TPL_PRIORITY = [3, 1, 2];
+  const rank = tpl => {
+    const i = SEED_TPL_PRIORITY.indexOf(tpl);
+    return i === -1 ? SEED_TPL_PRIORITY.length : i;
+  };
+  expanded.sort((a, b) => rank(a.level) - rank(b.level));
   return expanded;
 }
 
