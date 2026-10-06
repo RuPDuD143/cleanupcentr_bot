@@ -23,4 +23,4 @@ jobs:
         env:
           WAX_ACCOUNT: ${{ vars.WAX_ACCOUNT }}
           WAX_BOT_KEY: ${{ secrets.WAX_BOT_KEY }}
-        run: node bot-runner.mjs
+        run: node folder/bot-runner.mjs
