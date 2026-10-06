@@ -35,7 +35,7 @@ const RUCOIN_TOKEN_ID   = "rucoin-rupdud143143";
 const FEE_PER_POINT_USD = 0.001;
 const TASK_FEE_ACTIONS  = new Set(["water", "harvest", "plant", "startmach", "claimmach", "claimseedrwd"]);
 const MACHINE_COOLDOWN_MS = 6 * 60 * 60 * 1000;
-const MACHINES_ENABLED = false; // TEMP: machine claim/reload disabled — flip back to true to re-enable
+const MACHINES_ENABLED = true; // TEMP: machine claim/reload disabled — flip back to true to re-enable
 const ENERGY_COST = { water: 2, harvest: 2, plant: 2, claimmach: 100 };
 const CINDER_PER_ENERGY = 2;
 const UINT64_FIELDS = new Set(["plot_asset_id", "slot_index", "machine_id", "seed_batch_id", "recipe_id", "batch_size", "seed_tpl_id"]);
@@ -43,12 +43,12 @@ const UINT64_FIELDS = new Set(["plot_asset_id", "slot_index", "machine_id", "see
 // ─── Crafting mechanics (ported from farm.html) ───────────────────────────
 const PACK_BLEND_ID       = 1;
 const TOMATOE_PACK_MAIN   = 1800000;
-const TOMATOE_PACK_FEE    = 420000;
+const TOMATOE_PACK_FEE    = 10000;
 const TOMATOE_PACK_COST   = TOMATOE_PACK_MAIN + TOMATOE_PACK_FEE + 1000000; // 3,220,000
 
 const BIG_PACK_BLEND_ID   = 2;
 const BIG_PACK_MAIN       = 13400000;
-const BIG_PACK_FEE        = 3000000;
+const BIG_PACK_FEE        = 10000;
 const BIG_PACK_COST       = BIG_PACK_MAIN + BIG_PACK_FEE + 1000000; // 17,400,000
 
 const SEED_STOCK_THRESHOLD = 20;
@@ -273,7 +273,7 @@ function buildBuyPackActions(balances) {
     const feeQty  = (BIG_PACK_FEE  * numPacks).toFixed(8);
     return [
       { account: MAESTRO_CTR, name: "transfer", data: { from: actor(), to: CONTRACT, quantity: `${mainQty} TOMATOE`, memo: `BUY:${BIG_PACK_BLEND_ID}:${numPacks}` }, _label: `🛒 Buy ${numPacks} big seed pack${numPacks > 1 ? "s" : ""} — ${mainQty} TOMATOE` },
-      { account: MAESTRO_CTR, name: "transfer", data: { from: actor(), to: "swap.alcor", quantity: `${feeQty} TOMATOE`, memo: "swapexactin#3271#hzenu.c.wam#1.00000000 WAX@eosio.token#0" }, _label: `🛒 Pack purchase earnings — ${feeQty} TOMATOE` }
+      { account: MAESTRO_CTR, name: "transfer", data: { from: actor(), to: "swap.alcor", quantity: `${feeQty} TOMATOE`, memo: "swapexactin#3271#hzenu.c.wam#0.01000000 WAX@eosio.token#0" }, _label: `🛒 Pack purchase earnings — ${feeQty} TOMATOE` }
     ];
   }
 
@@ -284,7 +284,7 @@ function buildBuyPackActions(balances) {
     const feeQty  = (TOMATOE_PACK_FEE  * numPacks).toFixed(8);
     return [
       { account: MAESTRO_CTR, name: "transfer", data: { from: actor(), to: CONTRACT, quantity: `${mainQty} TOMATOE`, memo: `BUY:${PACK_BLEND_ID}:${numPacks}` }, _label: `🛒 Buy ${numPacks} seed pack${numPacks > 1 ? "s" : ""} — ${mainQty} TOMATOE` },
-      { account: MAESTRO_CTR, name: "transfer", data: { from: actor(), to: "swap.alcor", quantity: `${feeQty} TOMATOE`, memo: "swapexactin#3271#hzenu.c.wam#1.00000000 WAX@eosio.token#0" }, _label: `🛒 Pack purchase earnings — ${feeQty} TOMATOE` }
+      { account: MAESTRO_CTR, name: "transfer", data: { from: actor(), to: "swap.alcor", quantity: `${feeQty} TOMATOE`, memo: "swapexactin#3271#hzenu.c.wam#0.01000000 WAX@eosio.token#0" }, _label: `🛒 Pack purchase earnings — ${feeQty} TOMATOE` }
     ];
   }
 
