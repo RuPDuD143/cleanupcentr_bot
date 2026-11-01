@@ -40,7 +40,7 @@ const save = (s) => fs.writeFileSync(STATE, JSON.stringify(s, null, 2) + '\n');
       actions: [{
         account: 'eosio',
         name: 'claimgbmvote',
-        authorization: [{ actor: ACCOUNT, permission: 'active' }],
+        authorization: [{ actor: ACCOUNT, permission: 'generator' }],
         data: { owner: ACCOUNT },
       }],
     }, { blocksBehind: 3, expireSeconds: 60 });
