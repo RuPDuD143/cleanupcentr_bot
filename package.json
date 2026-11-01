@@ -1,0 +1,10 @@
+{
+  "name": "wax-claim",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Claims eosio::claimgbmvote for a WAX account every 24h10m",
+  "main": "claim.js",
+  "scripts": { "start": "node claim.js" },
+  "engines": { "node": ">=18" },
+  "dependencies": { "eosjs": "^22.1.0" }
+}
