@@ -3,9 +3,10 @@ const path = require('path');
 const { Api, JsonRpc } = require('eosjs');
 const { JsSignatureProvider } = require('eosjs/dist/eosjs-jssig');
 
-const ACCOUNT  = process.env.WAX_ACCOUNT  || 'pesolargame1';
-const ENDPOINT = process.env.WAX_ENDPOINT || 'https://wax.greymass.com';
-const STATE    = path.join(__dirname, 'state-pesolar.json');
+const ACCOUNT    = process.env.WAX_ACCOUNT    || 'pesolargame1';
+const PERMISSION = process.env.WAX_PERMISSION || 'generator';
+const ENDPOINT   = process.env.WAX_ENDPOINT   || 'https://wax.greymass.com';
+const STATE      = path.join(__dirname, 'state-pesolar.json');
 
 // 24h10m between claims (for 24h25m use (24 * 60 + 25))
 const INTERVAL = (24 * 60 + 10) * 60 * 1000;
@@ -40,7 +41,7 @@ const save = (s) => fs.writeFileSync(STATE, JSON.stringify(s, null, 2) + '\n');
       actions: [{
         account: 'eosio',
         name: 'claimgbmvote',
-        authorization: [{ actor: ACCOUNT, permission: 'generator' }],
+        authorization: [{ actor: ACCOUNT, permission: PERMISSION }],
         data: { owner: ACCOUNT },
       }],
     }, { blocksBehind: 3, expireSeconds: 60 });
