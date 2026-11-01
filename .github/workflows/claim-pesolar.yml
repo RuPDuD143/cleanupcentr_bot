@@ -1,0 +1,43 @@
+name: WAX claim (pesolargame1)
+
+on:
+  workflow_dispatch:   # triggered by cron-job.org via the GitHub API
+
+permissions:
+  contents: write      # needed to commit state-pesolar.json
+
+concurrency:
+  group: wax-claim-pesolar
+  cancel-in-progress: false
+
+jobs:
+  claim:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install eosjs
+        run: npm install --no-save --no-audit --no-fund eosjs@22
+
+      - name: Claim if due
+        env:
+          WAX_PRIVATE_KEY: ${{ secrets.WAX_BOT_KEY }}
+          WAX_ACCOUNT: ${{ vars.WAX_ACCOUNT_PESOLAR }}
+        run: node claim-pesolar.js
+
+      - name: Save state
+        if: always()
+        run: |
+          if [ -n "$(git status --porcelain state-pesolar.json)" ]; then
+            git config user.name  "wax-claim-bot"
+            git config user.email "wax-claim-bot@users.noreply.github.com"
+            git add state-pesolar.json
+            git commit -m "update pesolar claim state"
+            git pull --rebase
+            git push
+          fi
