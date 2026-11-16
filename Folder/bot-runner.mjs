@@ -53,7 +53,7 @@ const BIG_PACK_COST       = BIG_PACK_MAIN + BIG_PACK_FEE + 1000000; // 17,400,00
 
 const SEED_STOCK_THRESHOLD = 20;
 // Seed pack template that is held back (not opened) once in-game seed stock
-// has reached SEED_STOCK_THRESHOLD.
+// has reached SEED_STOCK_THRESHOLD (applied in buildOpenSeedActions).
 const HELD_SEED_PACK_TPL_ID = 904728;
 
 const COMPOST_TPL_ID      = 904726;
@@ -264,8 +264,19 @@ function queuePlantActions(item, pendingActions) {
 }
 
 // ─── Crafting mechanics (ported from farm.html) ───────────────────────────
+// Seeds each unopened bag crate will yield (minimum), keyed by crate template id.
+// Counted toward seed stock so we don't buy more crates while a backlog of
+// unopened ones is sitting in the bag. Unlisted crate templates count as 0.
+const CRATE_MIN_SEEDS = {
+  904730: 3,   // small crate — at least 3 seeds
+  900986: 10,  // eco crate  — at least 10 seeds
+};
+function seedsInBagCrates() {
+  return bagPackArray.reduce((sum, p) => sum + (CRATE_MIN_SEEDS[Number(p.template_id)] || 0), 0);
+}
+
 function buildBuyPackActions(balances) {
-  const totalSeeds = seedArray.length + bagSeedArray.length;
+  const totalSeeds = seedArray.length + bagSeedArray.length + seedsInBagCrates();
   if (totalSeeds >= SEED_STOCK_THRESHOLD) return [];
 
   // Big crate (blend 2) takes priority over the small crate when affordable.
@@ -311,6 +322,8 @@ function buildOpenPackActions() {
 // Unconditionally opens every seed NFT sitting in the bag, regardless of
 // whether there's currently an empty plot slot for it — decoupled from
 // queuePlantActions so seed NFTs never sit unused waiting for a slot.
+// Exception: template HELD_SEED_PACK_TPL_ID is held back once in-game seeds
+// have reached SEED_STOCK_THRESHOLD.
 function buildOpenSeedActions() {
   const stocked = seedArray.length >= SEED_STOCK_THRESHOLD;
   const toOpen = bagSeedArray.filter(s => !(stocked && Number(s.seed_tpl_id) === HELD_SEED_PACK_TPL_ID));
