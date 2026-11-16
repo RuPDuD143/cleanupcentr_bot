@@ -52,6 +52,9 @@ const BIG_PACK_FEE        = 10000;
 const BIG_PACK_COST       = BIG_PACK_MAIN + BIG_PACK_FEE + 1000000; // 17,400,000
 
 const SEED_STOCK_THRESHOLD = 20;
+// Seed pack template that is held back (not opened) once in-game seed stock
+// has reached SEED_STOCK_THRESHOLD.
+const HELD_SEED_PACK_TPL_ID = 904728;
 
 const COMPOST_TPL_ID      = 904726;
 const COMPOST_BLEND_ID    = 4;
@@ -309,7 +312,11 @@ function buildOpenPackActions() {
 // whether there's currently an empty plot slot for it — decoupled from
 // queuePlantActions so seed NFTs never sit unused waiting for a slot.
 function buildOpenSeedActions() {
-  return bagSeedArray.map(s => ({
+  const stocked = seedArray.length >= SEED_STOCK_THRESHOLD;
+  const toOpen = bagSeedArray.filter(s => !(stocked && Number(s.seed_tpl_id) === HELD_SEED_PACK_TPL_ID));
+  const held = bagSeedArray.length - toOpen.length;
+  if (held > 0) console.log(`ℹ️ ${seedArray.length} in-game seeds (>= ${SEED_STOCK_THRESHOLD}) — holding ${held} seed pack(s) of template ${HELD_SEED_PACK_TPL_ID}.`);
+  return toOpen.map(s => ({
     account: ATOMIC_CTR, name: "transfer",
     data: { from: actor(), to: CONTRACT, asset_ids: [s.seed_asset_id], memo: "open:seedpack" },
     _label: `📦 Open seed NFT (${s.seed_asset_id})`
