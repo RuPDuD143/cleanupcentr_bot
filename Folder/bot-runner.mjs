@@ -224,16 +224,22 @@ let bagCompostArray = [];
 let bagPackArray = [];
 let bagPlotArray = [];
 let compostBalance = 0;
-let seedIdx = 0, _bagCompostIdx = 0, _compostUsed = 0;
-function resetPlantCounters() { seedIdx = 0; _bagCompostIdx = 0; _compostUsed = 0; }
+let seedIdx = 0, _bagCompostIdx = 0, _compostUsed = 0, _stakedPoints = 0;
+function resetPlantCounters() { seedIdx = 0; _bagCompostIdx = 0; _compostUsed = 0; _stakedPoints = 0; }
+
+// In-game compost a staked NFT adds: Compost Bag = 1, EcoFusion Compost = 10.
+const ECO_COMPOST_POINTS = 10;
+function compostPoints(tplId) { return tplId === ECO_COMPOST_TPL_ID ? ECO_COMPOST_POINTS : 1; }
 
 // Returns true if compost is available for this plant action — uses in-game
 // compost first, then falls back to staking a compost NFT from the bag.
 function resolveCompost(pendingActions, plotLabel) {
-  const available = compostBalance - _compostUsed;
+  const available = compostBalance + _stakedPoints - _compostUsed;
   if (available > 0) { _compostUsed++; return true; }
   if (_bagCompostIdx < bagCompostArray.length) {
     const nft = bagCompostArray[_bagCompostIdx++];
+    _stakedPoints += compostPoints(nft.template_id); // eco compost leaves 9 spare for later slots
+    _compostUsed++;
     pendingActions.push({
       account: ATOMIC_CTR, name: "transfer",
       data: { from: actor(), to: CONTRACT, asset_ids: [nft.asset_id], memo: "deposit:compost" },
@@ -363,6 +369,46 @@ function buildEcoBlendActions(availableCompost) {
     actions.push({ account: ATOMIC_CTR, name: "transfer", data: { from: actor(), to: CONTRACT, asset_ids: ids, memo: `BLEND:${ECO_BLEND_ID}` }, _label: `🧬 Eco compost blend #${i + 1} — 3 NFTs` });
   }
   return actions;
+}
+
+// Stake bag compost NFTs (deposit:compost) to raise the in-game compost balance
+// by `needed` points. `availableCompost` is ordered regular-bags-first. A Compost
+// Bag adds 1 point; an EcoFusion Compost adds 10, but it's also the plot-blend
+// ingredient, so it's only staked here when the remaining shortfall is >= 10
+// (never overshoots). Planting still falls back to eco compost if a slot truly
+// has nothing else to use (see resolveCompost).
+function buildStakeCompostActions(availableCompost, needed) {
+  const actions = [];
+  let remaining = Math.max(0, needed);
+  for (const nft of availableCompost) {
+    const pts = compostPoints(nft.template_id);
+    if (remaining <= 0 || pts > remaining) { if (pts === 1) break; else continue; }
+    remaining -= pts;
+    actions.push({
+      account: ATOMIC_CTR, name: "transfer",
+      data: { from: actor(), to: CONTRACT, asset_ids: [nft.asset_id], memo: "deposit:compost" },
+      _label: `🌿 Stake compost NFT (${nft.asset_id}, +${pts}) — raise in-game compost`
+    });
+  }
+  return actions;
+}
+
+// Compost vs seeds: compare in-game compost to total seed stock (in-game seeds +
+// bag seed NFTs + seeds still inside unopened bag crates).
+//  • compost > seeds  → surplus: compost-bag → eco compost blends and
+//                       eco compost → plot blends are enabled.
+//  • otherwise        → shortfall: blends stay off; stake just enough bag compost
+//                       NFTs to cover the seeds. NFTs already staked during planting
+//                       (indices < _bagCompostIdx) count toward the shortfall.
+function buildCompostPlanActions(availableCompost) {
+  const totalSeeds = seedArray.length + bagSeedArray.length + seedsInBagCrates();
+  if (compostBalance > totalSeeds) {
+    console.log(`ℹ️ In-game compost (${compostBalance}) > total seeds (${totalSeeds}) — compost/eco blending enabled.`);
+    return [...buildCompostBlendActions(availableCompost), ...buildEcoBlendActions(availableCompost)];
+  }
+  const needed = totalSeeds - compostBalance - _stakedPoints;
+  console.log(`ℹ️ In-game compost (${compostBalance}) <= total seeds (${totalSeeds}) — blending off, staking up to ${Math.max(0, needed)} compost NFT(s) (${availableCompost.length} available).`);
+  return buildStakeCompostActions(availableCompost, needed);
 }
 
 function buildStakePlotActions() {
@@ -514,8 +560,7 @@ async function main() {
   pendingActions.push(...buildBuyPackActions(balances));
   pendingActions.push(...buildOpenPackActions());
   pendingActions.push(...buildOpenSeedActions());
-  pendingActions.push(...buildCompostBlendActions(availableCompost));
-  pendingActions.push(...buildEcoBlendActions(availableCompost));
+  pendingActions.push(...buildCompostPlanActions(availableCompost));
   pendingActions.push(...buildStakePlotActions());
 
   if (MACHINES_ENABLED) {
