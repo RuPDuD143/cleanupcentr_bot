@@ -69,6 +69,34 @@ const ECO_BLEND_BATCH     = 3;
 const ECO_BLEND_MIN       = 3;
 const ECO_BLEND_TOMATOE_QTY = "323000.00000000 TOMATOE";
 
+// ─── AtomicMarket compost buyer ────────────────────────────────────────────
+// Scans AtomicMarket for cheap Compost Bag / EcoFusion Compost listings and buys
+// anything at or under the max WAX price below. Runs in its OWN transaction at
+// the start of each run, wrapped in try/catch, so a stale listing or missing
+// permission can never break the farming transaction.
+//
+// The "bot" permission must be linked (linkauth) to:
+//   eosio.token::transfer, atomicmarket::assertsale, atomicmarket::purchasesale
+const ATOMIC_API = "https://wax.api.atomicassets.io";
+const COMPOST_BUYER_ENABLED = true;
+const COMPOST_BUYER_DRY_RUN = process.env.COMPOST_BUY_DRY_RUN === "1"; // log only, don't buy
+// Your max price is set in TOMATOE and converted to WAX at the live rate each run,
+// then rounded UP to the nearest 5 WAX (85,000 TOMATOE ≈ 14.85 WAX → 15 WAX).
+const COMPOST_BUY_RULES = [
+  // tomatoeCost = what one NFT is "worth" in TOMATOE; maxPerRun caps NFTs bought per run
+  { label: "Compost Bag", templateId: 904726, tomatoeCost: 85000,  maxPerRun: 20 },
+  { label: "Eco Compost", templateId: 900863, tomatoeCost: 850000, maxPerRun: 20 },
+];
+const COMPOST_MAX_ROUND_WAX = 5; // round the WAX maximum up to the nearest multiple of this
+// TOMATOE/WAX rate source. If you know the Alcor swap pool id for WAX/TOMATOE, set
+// it here (same method as the CINDER/TRASH pools). Otherwise the rate is derived
+// from Alcor's token USD prices (TOMATOE_TOKEN_ID vs WAX_TOKEN_ID).
+const TOMATOE_POOL_ID  = null;
+const ALCOR_POOLS_API  = "https://wax.alcor.exchange/api/v2/swap/pools";
+const TOMATOE_TOKEN_ID = "tomatoe-maestrobeatz";
+const WAX_TOKEN_ID     = "wax-eosio.token";
+const COMPOST_BUY_WAX_RESERVE = 0; // WAX to always leave in the wallet
+
 const WAX_ACCOUNT = process.env.WAX_ACCOUNT;
 const WAX_BOT_KEY = process.env.WAX_BOT_KEY;
 if (!WAX_ACCOUNT || !WAX_BOT_KEY) {
@@ -480,7 +508,165 @@ function convertUInt64Fields(data) {
 }
 
 // ─── Main ──────────────────────────────────────────────────────────────────
+// ─── AtomicMarket compost buyer ────────────────────────────────────────────
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function proxyFetchJson(targetUrl, attempts = 4) {
+  for (let i = 1; ; i++) {
+    const res = await fetch(PROXY + encodeURIComponent(targetUrl), {
+      headers: { "X-Requested-With": "XMLHttpRequest", "Origin": "https://rupdud143.github.io" }
+    });
+    const text = await res.text();
+    if (/rate limit/i.test(text) && i < attempts) { await sleep(600 * 2 ** (i - 1)); continue; }
+    const match = text.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+    if (!match) throw new Error("No JSON found in proxied response for: " + targetUrl);
+    return JSON.parse(match[0]);
+  }
+}
+
+async function fetchWaxBalance() {
+  const res = await fetch(`${CHAIN.url}/v1/chain/get_currency_balance`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code: "eosio.token", account: actor(), symbol: "WAX" })
+  });
+  const data = await res.json();
+  return data.length > 0 ? parseFloat(String(data[0]).split(" ")[0]) || 0 : 0;
+}
+
+// Cheapest single-asset WAX listings for one template. Bundles are skipped:
+// assertsale must list EVERY asset in the sale, and a bundle's price isn't
+// comparable per-NFT anyway.
+async function fetchCompostListings(templateId) {
+  const url = `${ATOMIC_API}/atomicmarket/v1/sales?template_id=${templateId}`
+    + `&state=1&symbol=WAX&sort=price&order=asc&limit=100`;
+  const json = await proxyFetchJson(url);
+  if (!json.success) throw new Error("AtomicMarket API error: " + JSON.stringify(json.message || json));
+  return (json.data || [])
+    .filter(sale => Array.isArray(sale.assets) && sale.assets.length === 1 && sale.seller !== actor())
+    .map(sale => {
+      let units, precision, symbol;
+      if (sale.price?.amount != null && sale.price?.token_precision != null) {
+        units = BigInt(sale.price.amount); precision = Number(sale.price.token_precision); symbol = sale.price.token_symbol || "WAX";
+      } else if (sale.listing_price) {
+        const [num, sym] = String(sale.listing_price).split(" ");
+        const [w, f = ""] = num.split(".");
+        precision = f.length; symbol = sym; units = BigInt(w + f);
+      } else return null;
+      if (symbol !== "WAX" || precision !== 8) return null;
+      return { sale_id: String(sale.sale_id), asset_id: String(sale.assets[0].asset_id), seller: sale.seller, units };
+    })
+    .filter(Boolean);
+}
+
+const waxStr = units => {
+  const whole = units / 100000000n, frac = (units % 100000000n).toString().padStart(8, "0");
+  return `${whole}.${frac} WAX`;
+};
+
+function buildCompostPurchaseActions(picks) {
+  const total = picks.reduce((sum, c) => sum + c.units, 0n);
+  return [
+    ...picks.map(c => ({
+      account: "atomicmarket", name: "assertsale",
+      data: { sale_id: c.sale_id, asset_ids_to_assert: [c.asset_id], listing_price_to_assert: waxStr(c.units), settlement_symbol_to_assert: "8,WAX" }
+    })),
+    { account: "eosio.token", name: "transfer", data: { from: actor(), to: "atomicmarket", quantity: waxStr(total), memo: "deposit" } },
+    ...picks.map(c => ({
+      account: "atomicmarket", name: "purchasesale",
+      data: { buyer: actor(), sale_id: c.sale_id, intended_delphi_median: 0, taker_marketplace: "" }
+    })),
+  ];
+}
+
+const sendPurchase = picks => session.transact(
+  { actions: buildCompostPurchaseActions(picks).map(a => ({ ...a, authorization: [perm()] })) },
+  { broadcast: true }
+);
+
+// TOMATOE per 1 WAX, from the Alcor pool if TOMATOE_POOL_ID is set, else from
+// token USD prices. Returns null if no sane rate could be found.
+async function alcorJson(url) {
+  try { const r = await fetch(url); return await r.json(); }
+  catch { return await proxyFetchJson(url); } // same fallback path as the reference tool
+}
+async function fetchTomatoePerWax() {
+  try {
+    if (TOMATOE_POOL_ID) {
+      const pool = await alcorJson(`${ALCOR_POOLS_API}/${TOMATOE_POOL_ID}`);
+      if (typeof pool.priceA === "number" && typeof pool.priceB === "number") {
+        // priceA = price of token A in token B; priceB = the inverse. Work out which side is TOMATOE.
+        const symA = String(pool.tokenA?.symbol ?? "").toUpperCase();
+        const symB = String(pool.tokenB?.symbol ?? "").toUpperCase();
+        let waxPerTomatoe = null;
+        if (symA === "TOMATOE" && symB === "WAX") waxPerTomatoe = pool.priceA;
+        else if (symB === "TOMATOE" && symA === "WAX") waxPerTomatoe = pool.priceB;
+        if (waxPerTomatoe > 0) return 1 / waxPerTomatoe;
+        console.log("   ⚠️ Couldn't tell which side of the pool is TOMATOE — falling back to token prices.");
+      }
+    }
+    const [tom, wax] = await Promise.all([
+      alcorJson(`https://wax.alcor.exchange/api/v2/tokens/${TOMATOE_TOKEN_ID}`),
+      alcorJson(`https://wax.alcor.exchange/api/v2/tokens/${WAX_TOKEN_ID}`),
+    ]);
+    const usd = d => (typeof d.safe_usd_price === "number" && d.safe_usd_price > 0) ? d.safe_usd_price : d.usd_price;
+    const tomUsd = usd(tom), waxUsd = usd(wax);
+    if (!(tomUsd > 0) || !(waxUsd > 0)) return null;
+    return waxUsd / tomUsd;
+  } catch { return null; }
+}
+
+// Highest WAX price for an NFT worth `tomatoeCost` TOMATOE, rounded up to the next 5 WAX.
+const maxWaxFor = (tomatoeCost, tomatoePerWax) =>
+  Math.ceil((tomatoeCost / tomatoePerWax) / COMPOST_MAX_ROUND_WAX - 1e-9) * COMPOST_MAX_ROUND_WAX;
+
+async function runCompostBuyer() {
+  if (!COMPOST_BUYER_ENABLED) return;
+  let waxBalance = (await fetchWaxBalance()) - COMPOST_BUY_WAX_RESERVE;
+  let budget = BigInt(Math.floor(Math.max(0, waxBalance) * 1e8));
+  console.log(`🛒 Compost buyer: ${waxBalance.toFixed(4)} WAX spendable${COMPOST_BUYER_DRY_RUN ? " (DRY RUN)" : ""}.`);
+
+  const tomatoePerWax = await fetchTomatoePerWax();
+  if (!tomatoePerWax) { console.log("   ⚠️ Couldn't get the TOMATOE/WAX rate — skipping the compost buyer this run."); return; }
+  console.log(`   Rate: ${tomatoePerWax.toFixed(0)} TOMATOE per WAX.`);
+
+  const picks = [];
+  for (const rule of COMPOST_BUY_RULES) {
+    await sleep(300);
+    rule.maxWax = maxWaxFor(rule.tomatoeCost, tomatoePerWax);
+    const maxUnits = BigInt(Math.round(rule.maxWax * 1e8));
+    const listings = (await fetchCompostListings(rule.templateId))
+      .filter(l => l.units <= maxUnits) // already sorted cheapest-first by the API
+      .slice(0, rule.maxPerRun);
+    console.log(`   ${rule.label} (tpl ${rule.templateId}): ${listings.length} listing(s) at <= ${rule.maxWax} WAX (${rule.tomatoeCost.toLocaleString()} TOMATOE).`);
+    for (const l of listings) {
+      if (l.units > budget) { console.log(`   ⚠️ Out of WAX — skipping the rest of ${rule.label}.`); break; }
+      budget -= l.units;
+      picks.push({ ...l, label: rule.label });
+    }
+  }
+  if (picks.length === 0) { console.log("   Nothing to buy."); return; }
+  picks.forEach(c => console.log(`   • ${c.label} asset ${c.asset_id} — sale ${c.sale_id} — ${waxStr(c.units)} (seller ${c.seller})`));
+  if (COMPOST_BUYER_DRY_RUN) return;
+
+  try {
+    const r = await sendPurchase(picks);
+    console.log(`✅ Bought ${picks.length} compost NFT(s):`, r.resolved?.transaction?.id?.toString() || "sent");
+    return;
+  } catch (e) {
+    console.log(`⚠️ Batch purchase failed (${e.message || e}) — retrying one listing at a time.`);
+  }
+  let bought = 0;
+  for (const c of picks) {
+    try { await sendPurchase([c]); bought++; console.log(`   ✅ Bought ${c.label} ${c.asset_id}`); }
+    catch (e) { console.log(`   ❌ ${c.label} ${c.asset_id} (sale ${c.sale_id}): ${e.message || e}`); }
+  }
+  console.log(`🛒 Compost buyer: ${bought}/${picks.length} bought individually.`);
+}
+
 async function main() {
+  try { await runCompostBuyer(); }
+  catch (e) { console.log(`⚠️ Compost buyer skipped: ${e.message || e}`); }
+
   console.log(`Fetching state for ${actor()}…`);
 
   const plotsData = await apiFetch(`/api/farms/${FARM_ID}/plots`);
